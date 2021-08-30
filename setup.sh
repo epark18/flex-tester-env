@@ -6,8 +6,8 @@
 	cwd=$(pwd)
 
 # Create bundle folders
-	mkdir -p bundles/7.1.x
-	mkdir -p bundles/master
+	#mkdir -p bundles/7.1.x
+	#mkdir -p bundles/master
 # Exceptions
 	set -e
 
@@ -29,7 +29,7 @@ cleandb ()
 	read -p "Enter database name [lportal]: " db_name
 	db_name=${db_name:-lportal}
 	echo -e "\e[44mOkay! I will drop $db_name and recreate it.\e[0m"
-	mysql -e "DROP DATABASE if exists $db_name; create database $db_name character set utf8;"
+	mysql -e "DROP DATABASE if exists $db_name; create database $db_name character set utf8mb4;"
 }
 
 cleanmaster ()
@@ -90,7 +90,7 @@ cluster ()
 
 # Preparing Databases master-staged and master-live
 	echo -e "\e[44mPreparing database for the cluster\e[0m"
-	mysql -e "DROP DATABASE if exists lportal; create database lportal character set utf8;"
+	mysql -e "DROP DATABASE if exists lportal; create database lportal character set utf8mb4;"
 
 # Preparing nodes to use a remote elastic search cluster
 	echo -e "\e[44mPreparing the nodes to use remote elastic search\e[0m"
@@ -117,7 +117,7 @@ createdb ()
 	read -p "Enter database name [lportal]: " db_name
 	db_name=${db_name:-lportal}
 	echo -e "\e[44mOkay! I will drop $db_name and recreate it.\e[0m"
-	mysql -e "create database $db_name character set utf8;"
+	mysql -e "create database $db_name character set utf8mb4;"
 }
 
 dl71 ()
@@ -236,11 +236,77 @@ rstaging ()
 
 # Preparing Databases master-staged and master-live
 	echo -e "\e[44mPreparing databases master-staged and master-live\e[0m"
-	mysql -e "DROP DATABASE if exists master_staged; create database master_staged character set utf8;"
-	mysql -e "DROP DATABASE if exists master_live; create database master_live character set utf8;"
+	mysql -e "DROP DATABASE if exists master_staged; create database master_staged character set utf8mb4;"
+	mysql -e "DROP DATABASE if exists master_live; create database master_live character set utf8mb4;"
 	echo -e "\e[44mThe bundle is ready for testing.\e[0m"
 	echo -e "\e[44mYou are on Githash: $(cat master-staged/tomcat-9.0.17/.githash)\e[0m"
 	notify-send "The bundle is ready for testing!"
+}
+
+dlhf()
+{  
+# Clear out {username} and add your own username for this to work
+# Does not include putting the licence.xml and the mysql.jar
+# Clean out old copy
+	echo -e "\e[44mCleaning out old extracted binaries/folders\e[0m"
+	rm -rf $cwd/bundles/hotfix
+
+# Create directories that will be used
+	echo -e "\e[44mCreating folders for bundle backup if they don't exist\e[0m"
+	mkdir -p bundles/hotfix
+
+# Check download and download bundle
+	echo -e "\e[44mPlease only use 7z or zip for portal bundles\e[0m"
+   	read -p "Is the portal version a zip file? Please type Y or N: " portalver
+  	read -p 'Please specify download link for portal: ' portaldl
+	wget -c -N --user={email@liferay.com} --ask-password $portaldl -P $cwd/bundles/hotfix
+	if [[ $portalver == 'y' ]] || [[ $portalver == 'Y' ]]
+		then
+			unzip $cwd/bundles/hotfix/*.zip -d $cwd/bundles/hotfix/
+	else
+		7z x $cwd/bundles/hotfix/*.7z -O$cwd/bundles/hotfix
+	fi
+	echo -e "\e[44mDone downloading or checking\e[0m"
+
+	#cd $cwd/bundles/hotfix/*/
+	#echo -e 'Changed directory to liferay.home'
+  
+#  Download proper patching tool
+	echo -e "\e[44mDownloading the patching tool\e[0m"
+	rm -rf $cwd/bundles/hotfix/*/patching-tool
+  	read -p 'Please specify download link for patching tool: ' patchdl
+	wget -c -N --user={email@liferay.com} --ask-password $patchdl -P $cwd/bundles/hotfix/*/
+	unzip $cwd/bundles/hotfix/*/*.zip -d $cwd/bundles/hotfix/*/
+	echo -e "\e[44mDone downloading or checking\e[0m"
+
+	#Change directory into patching tool folder
+ 	#cd $cwd/bundles/hotfix/*/patching-tool
+ 	#echo -e 'changing into patching tool directory..' $(pwd)
+  
+  # Navigate into patching tool and run commands to install patch
+	echo -e "\e[44mRunning auto-discovery\e[0m"
+	bash $cwd/bundles/hotfix/*/patching-tool/patching-tool.sh auto-discovery 
+	bash $cwd/bundles/hotfix/*/patching-tool/patching-tool.sh revert
+	echo -e "\e[44mDownloading the hotfix\e[0m"
+	read -p "Does this hotfix require a fixpack? Please type Y or N: " fixpack
+	if [[ $fixpack == 'y' ]]  || [[ $fixpack == 'Y' ]]
+		then
+			read -p 'Please specify download link for the fixpack: ' fixpackdl
+	wget -c -N --user={email@liferay.com} --ask-password $fixpackdl -P $cwd/bundles/hotfix/*/patching-tool/patches
+	fi
+	read -p 'Please specify download link for the hotfix: ' hotfixdl
+	wget -c -N --user={email@liferay.com} --ask-password $hotfixdl -P $cwd/bundles/hotfix/*/patching-tool/patches
+	bash $cwd/bundles/hotfix/*/patching-tool/patching-tool.sh install 
+
+	# Deleting Data and Logs folders and cleaning DB
+	echo -e "\e[44mDeleting the logs and data folder\e[0m"
+	echo -e "\e[44mDeleting the osgi/state folder\e[0m"
+	rm -r $cwd/bundles/hotfix/*/data
+	if [ -d $cwd/bundles/hotfix/*/osgi/state ]; then rm -r $cwd/bundles/hotfix/*/osgi/state; fi
+	if [ -d $cwd/bundles/hotfix/*/logs ]; then rm -r $cwd/bundles/hotfix/*/logs; fi 
+	echo -e "\e[44mRunning the cleandb command-1\e[0m"
+	cleandb
+	
 }
 
 #### Help documentation
@@ -258,10 +324,11 @@ usage ()
 	clean              - Deletes everything except bundles, resources and setup.sh
 	cleandb            - Cleans the database if it already exists
 	cleanmaster        - Doesn't download, just cleans up completely
-	cluster		   - Sets up a clean 2 cluster node
+	cluster		   	     - Sets up a clean 2 cluster node
 	createdb           - Creates the database
 	dl71               - Downloads the 7.1 CE GA3
 	dlmaster           - Downloads the latest master
+	dlhf			         - Downloads and setsup hotfix
 	rstaging           - Sets up remote staging where remote is 8080 and live is 9080
 
 
